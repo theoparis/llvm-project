@@ -55,12 +55,16 @@ std::unique_ptr<TarWriter> elf::tar;
 
 // Returns "<internal>", "foo.a(bar.o)" or "baz.o".
 std::string lld::toString(const InputFile *f) {
+#ifndef _REENTRANT
   static std::mutex mu;
+#endif
   if (!f)
     return "<internal>";
 
   {
+#ifndef _REENTRANT
     std::lock_guard<std::mutex> lock(mu);
+#endif
     if (f->toStringCache.empty()) {
       if (f->archiveName.empty())
         f->toStringCache = f->getName();
@@ -1680,9 +1684,10 @@ static uint8_t mapVisibility(GlobalValue::VisibilityTypes gvVisibility) {
   llvm_unreachable("unknown visibility");
 }
 
-static void
-createBitcodeSymbol(Symbol *&sym, const std::vector<bool> &keptComdats,
-                    const lto::InputFile::Symbol &objSym, BitcodeFile &f) {
+static void createBitcodeSymbol(Symbol *&sym,
+                                const std::vector<bool> &keptComdats,
+                                const lto::InputFile::Symbol &objSym,
+                                BitcodeFile &f) {
   uint8_t binding = objSym.isWeak() ? STB_WEAK : STB_GLOBAL;
   uint8_t type = objSym.isTLS() ? STT_TLS : STT_NOTYPE;
   uint8_t visibility = mapVisibility(objSym.getVisibility());

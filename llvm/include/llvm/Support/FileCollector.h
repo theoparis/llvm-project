@@ -12,7 +12,9 @@
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/VirtualFileSystem.h"
+#ifndef _REENTRANT
 #include <mutex>
+#endif
 #include <string>
 
 namespace llvm {
@@ -41,8 +43,10 @@ protected:
                    IntrusiveRefCntPtr<vfs::FileSystem> FS,
                    std::error_code &EC) = 0;
 
+#ifndef _REENTRANT
   /// Synchronizes access to internal data structures.
   std::mutex Mutex;
+#endif
 
   /// Tracks already seen files so they can be skipped.
   StringSet<> Seen;

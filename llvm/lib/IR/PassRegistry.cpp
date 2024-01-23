@@ -33,12 +33,16 @@ PassRegistry *PassRegistry::getPassRegistry() {
 PassRegistry::~PassRegistry() = default;
 
 const PassInfo *PassRegistry::getPassInfo(const void *TI) const {
+#ifndef _REENTRANT
   sys::SmartScopedReader<true> Guard(Lock);
+#endif
   return PassInfoMap.lookup(TI);
 }
 
 const PassInfo *PassRegistry::getPassInfo(StringRef Arg) const {
+#ifndef _REENTRANT
   sys::SmartScopedReader<true> Guard(Lock);
+#endif
   return PassInfoStringMap.lookup(Arg);
 }
 
@@ -47,7 +51,9 @@ const PassInfo *PassRegistry::getPassInfo(StringRef Arg) const {
 //
 
 void PassRegistry::registerPass(const PassInfo &PI, bool ShouldFree) {
+#ifndef _REENTRANT
   sys::SmartScopedWriter<true> Guard(Lock);
+#endif
   bool Inserted =
       PassInfoMap.insert(std::make_pair(PI.getTypeInfo(), &PI)).second;
   assert(Inserted && "Pass registered multiple times!");
@@ -63,7 +69,9 @@ void PassRegistry::registerPass(const PassInfo &PI, bool ShouldFree) {
 }
 
 void PassRegistry::enumerateWith(PassRegistrationListener *L) {
+#ifndef _REENTRANT
   sys::SmartScopedReader<true> Guard(Lock);
+#endif
   for (auto PassInfoPair : PassInfoMap)
     L->passEnumerate(PassInfoPair.second);
 }
@@ -87,7 +95,9 @@ void PassRegistry::registerAnalysisGroup(const void *InterfaceID,
     assert(ImplementationInfo &&
            "Must register pass before adding to AnalysisGroup!");
 
+#ifndef _REENTRANT
     sys::SmartScopedWriter<true> Guard(Lock);
+#endif
 
     // Make sure we keep track of the fact that the implementation implements
     // the interface.
@@ -108,12 +118,16 @@ void PassRegistry::registerAnalysisGroup(const void *InterfaceID,
 }
 
 void PassRegistry::addRegistrationListener(PassRegistrationListener *L) {
+#ifndef _REENTRANT
   sys::SmartScopedWriter<true> Guard(Lock);
+#endif
   Listeners.push_back(L);
 }
 
 void PassRegistry::removeRegistrationListener(PassRegistrationListener *L) {
+#ifndef _REENTRANT
   sys::SmartScopedWriter<true> Guard(Lock);
+#endif
 
   auto I = llvm::find(Listeners, L);
   Listeners.erase(I);

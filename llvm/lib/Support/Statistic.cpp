@@ -30,7 +30,9 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/ManagedStatic.h"
+#ifndef _REENTRANT
 #include "llvm/Support/Mutex.h"
+#endif
 #include "llvm/Support/Timer.h"
 #include "llvm/Support/YAMLTraits.h"
 #include "llvm/Support/raw_ostream.h"
@@ -72,6 +74,7 @@ class StatisticInfo {
 
   /// Sort statistics by debugtype,name,description.
   void sort();
+
 public:
   using const_iterator = std::vector<TrackingStatistic *>::const_iterator;
 
@@ -82,16 +85,16 @@ public:
 
   const_iterator begin() const { return Stats.begin(); }
   const_iterator end() const { return Stats.end(); }
-  iterator_range<const_iterator> statistics() const {
-    return {begin(), end()};
-  }
+  iterator_range<const_iterator> statistics() const { return {begin(), end()}; }
 
   void reset();
 };
 } // end anonymous namespace
 
 static ManagedStatic<StatisticInfo> StatInfo;
-static ManagedStatic<sys::SmartMutex<true> > StatLock;
+#ifndef _REENTRANT
+static ManagedStatic<sys::SmartMutex<true>> StatLock;
+#endif
 
 /// RegisterStatistic - The first time a statistic is bumped, this method is
 /// called.
@@ -105,9 +108,13 @@ void TrackingStatistic::RegisterStatistic() {
   // order inversion. To avoid that, we dereference the ManagedStatics first,
   // and only take StatLock afterwards.
   if (!Initialized.load(std::memory_order_relaxed)) {
+#ifndef _REENTRANT
     sys::SmartMutex<true> &Lock = *StatLock;
+#endif
     StatisticInfo &SI = *StatInfo;
+#ifndef _REENTRANT
     sys::SmartScopedLock<true> Writer(Lock);
+#endif
     // Check Initialized again after acquiring the lock.
     if (Initialized.load(std::memory_order_relaxed))
       return;
@@ -152,7 +159,9 @@ void StatisticInfo::sort() {
 }
 
 void StatisticInfo::reset() {
+#ifndef _REENTRANT
   sys::SmartScopedLock<true> Writer(*StatLock);
+#endif
 
   // Tell each statistic that it isn't registered so it has to register
   // again. We're holding the lock so it won't be able to do so until we're
@@ -196,12 +205,14 @@ void llvm::PrintStatistics(raw_ostream &OS) {
     OS << format("%*" PRIu64 " %-*s - %s\n", MaxValLen, Stat->getValue(),
                  MaxDebugTypeLen, Stat->getDebugType(), Stat->getDesc());
 
-  OS << '\n';  // Flush the output stream.
+  OS << '\n'; // Flush the output stream.
   OS.flush();
 }
 
 void llvm::PrintStatisticsJSON(raw_ostream &OS) {
+#ifndef _REENTRANT
   sys::SmartScopedLock<true> Reader(*StatLock);
+#endif
   StatisticInfo &Stats = *StatInfo;
 
   Stats.sort();
@@ -215,8 +226,8 @@ void llvm::PrintStatisticsJSON(raw_ostream &OS) {
            "Statistic group/type name is simple.");
     assert(yaml::needsQuotes(Stat->getName()) == yaml::QuotingType::None &&
            "Statistic name is simple");
-    OS << "\t\"" << Stat->getDebugType() << '.' << Stat->getName() << "\": "
-       << Stat->getValue();
+    OS << "\t\"" << Stat->getDebugType() << '.' << Stat->getName()
+       << "\": " << Stat->getValue();
     delim = ",\n";
   }
   // Print timers.
@@ -228,11 +239,14 @@ void llvm::PrintStatisticsJSON(raw_ostream &OS) {
 
 void llvm::PrintStatistics() {
 #if LLVM_ENABLE_STATS
+#ifndef _REENTRANT
   sys::SmartScopedLock<true> Reader(*StatLock);
+#endif
   StatisticInfo &Stats = *StatInfo;
 
   // Statistics not enabled?
-  if (Stats.Stats.empty()) return;
+  if (Stats.Stats.empty())
+    return;
 
   // Get the stream to write to.
   std::unique_ptr<raw_ostream> OutStream = CreateInfoOutputFile();
@@ -255,7 +269,9 @@ void llvm::PrintStatistics() {
 }
 
 std::vector<std::pair<StringRef, uint64_t>> llvm::GetStatistics() {
+#ifndef _REENTRANT
   sys::SmartScopedLock<true> Reader(*StatLock);
+#endif
   std::vector<std::pair<StringRef, uint64_t>> ReturnStats;
 
   for (const auto &Stat : StatInfo->statistics())
@@ -263,6 +279,4 @@ std::vector<std::pair<StringRef, uint64_t>> llvm::GetStatistics() {
   return ReturnStats;
 }
 
-void llvm::ResetStatistics() {
-  StatInfo->reset();
-}
+void llvm::ResetStatistics() { StatInfo->reset(); }

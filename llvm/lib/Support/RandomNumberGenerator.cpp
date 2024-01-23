@@ -25,6 +25,10 @@
 #include "Unix/Unix.h"
 #endif
 
+#ifdef __wasi__
+#include <sys/random.h>
+#endif
+
 using namespace llvm;
 
 #define DEBUG_TYPE "rng"
@@ -69,12 +73,20 @@ std::error_code llvm::getRandomBytes(void *Buffer, size_t Size) {
 #ifdef _WIN32
   HCRYPTPROV hProvider;
   if (CryptAcquireContext(&hProvider, 0, 0, PROV_RSA_FULL,
-                           CRYPT_VERIFYCONTEXT | CRYPT_SILENT)) {
+                          CRYPT_VERIFYCONTEXT | CRYPT_SILENT)) {
     ScopedCryptContext ScopedHandle(hProvider);
     if (CryptGenRandom(hProvider, Size, static_cast<BYTE *>(Buffer)))
       return std::error_code();
   }
   return std::error_code(GetLastError(), std::system_category());
+#elif defined(__wasi__)
+  std::error_code Ret;
+  ssize_t BytesRead = getentropy(Buffer, Size);
+  if (BytesRead == -1)
+    Ret = std::error_code(errno, std::system_category());
+  else if (BytesRead != static_cast<ssize_t>(Size))
+    Ret = std::error_code(EIO, std::system_category());
+  return Ret;
 #else
   int Fd = open("/dev/urandom", O_RDONLY);
   if (Fd != -1) {

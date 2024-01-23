@@ -73,12 +73,14 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/FileOutputBuffer.h"
+#ifndef _REENTRANT
 #include <mutex>
+#endif
 
 namespace llvm {
 class DiagnosticInfo;
 class raw_ostream;
-}
+} // namespace llvm
 
 namespace lld {
 
@@ -136,7 +138,9 @@ private:
   // be indirectly called from multiple threads, we protect them using a mutex.
   // In the future, we plan on supporting several concurrent linker contexts,
   // which explains why the mutex is not a global but part of this context.
+#ifndef _REENTRANT
   std::mutex mu;
+#endif
   llvm::raw_ostream *stdoutOS{};
   llvm::raw_ostream *stderrOS{};
 };

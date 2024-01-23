@@ -66,7 +66,9 @@ public:
 
   template <class LP> void run();
 
+#ifndef _REENTRANT
   ThreadPool threadPool;
+#endif
   std::unique_ptr<FileOutputBuffer> &buffer;
   uint64_t addr = 0;
   uint64_t fileOff = 0;
@@ -1104,14 +1106,20 @@ void Writer::finalizeLinkEditSegment() {
       symtabSection,     indirectSymtabSection,
       dataInCodeSection, functionStartsSection,
   };
+#ifndef _REENTRANT
   SmallVector<std::shared_future<void>> threadFutures;
   threadFutures.reserve(linkEditSections.size());
+#endif
   for (LinkEditSection *osec : linkEditSections)
     if (osec)
+#ifndef _REENTRANT
       threadFutures.emplace_back(threadPool.async(
           [](LinkEditSection *osec) { osec->finalizeContents(); }, osec));
   for (std::shared_future<void> &future : threadFutures)
     future.wait();
+#else
+      osec->finalizeContents();
+#endif
 
   // Now that __LINKEDIT is filled out, do a proper calculation of its
   // addresses and offsets.
@@ -1185,6 +1193,7 @@ void Writer::writeUuid() {
   std::vector<ArrayRef<uint8_t>> chunks = split(data, 1024 * 1024);
   // Leave one slot for filename
   std::vector<uint64_t> hashes(chunks.size() + 1);
+#ifndef _REENTRANT
   SmallVector<std::shared_future<void>> threadFutures;
   threadFutures.reserve(chunks.size());
   for (size_t i = 0; i < chunks.size(); ++i)
@@ -1192,6 +1201,9 @@ void Writer::writeUuid() {
         [&](size_t j) { hashes[j] = xxh3_64bits(chunks[j]); }, i));
   for (std::shared_future<void> &future : threadFutures)
     future.wait();
+#else
+  hashes = xxHash64(chunks);
+#endif
   // Append the output filename so that identical binaries with different names
   // don't get the same UUID.
   hashes[chunks.size()] = xxh3_64bits(sys::path::filename(config->finalOutput));
@@ -1311,6 +1323,7 @@ template <class LP> void Writer::run() {
   sortSegmentsAndSections();
   createLoadCommands<LP>();
   finalizeAddresses();
+#ifndef _REENTRANT
   threadPool.async([&] {
     if (LLVM_ENABLE_THREADS && config->timeTraceEnabled)
       timeTraceProfilerInitialize(config->timeTraceGranularity, "writeMapFile");
@@ -1318,6 +1331,9 @@ template <class LP> void Writer::run() {
     if (LLVM_ENABLE_THREADS && config->timeTraceEnabled)
       timeTraceProfilerFinishThread();
   });
+#else
+  writeMapFile();
+#endif
   finalizeLinkEditSegment();
   writeOutputFile();
 }

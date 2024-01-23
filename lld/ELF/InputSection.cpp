@@ -21,7 +21,9 @@
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/xxhash.h"
 #include <algorithm>
+#ifndef _REENTRANT
 #include <mutex>
+#endif
 #include <optional>
 #include <vector>
 
@@ -73,7 +75,7 @@ InputSectionBase::InputSectionBase(InputFile *file, uint64_t flags,
   // If SHF_COMPRESSED is set, parse the header. The legacy .zdebug format is no
   // longer supported.
   if (flags & SHF_COMPRESSED)
-    invokeELFT(parseCompressedHeader,);
+    invokeELFT(parseCompressedHeader, );
 }
 
 // Drop SHF_GROUP bit unless we are producing a re-linkable object file.
@@ -123,8 +125,10 @@ static void decompressAux(const InputSectionBase &sec, uint8_t *out,
 void InputSectionBase::decompress() const {
   uint8_t *uncompressedBuf;
   {
+#ifndef _REENTRANT
     static std::mutex mu;
     std::lock_guard<std::mutex> lock(mu);
+#endif
     uncompressedBuf = bAlloc().Allocate<uint8_t>(size);
   }
 
@@ -1132,7 +1136,8 @@ void InputSectionBase::adjustSplitStackFunctionPrologues(uint8_t *buf,
     // conservative.
     if (Defined *d = dyn_cast<Defined>(rel.sym))
       if (InputSection *isec = cast_or_null<InputSection>(d->section))
-        if (!isec || !isec->getFile<ELFT>() || isec->getFile<ELFT>()->splitStack)
+        if (!isec || !isec->getFile<ELFT>() ||
+            isec->getFile<ELFT>()->splitStack)
           continue;
 
     if (enclosingPrologueAttempted(rel.offset, prologues))

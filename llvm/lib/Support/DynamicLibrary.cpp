@@ -15,7 +15,9 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/Config/config.h"
+#ifndef _REENTRANT
 #include "llvm/Support/Mutex.h"
+#endif
 #include <vector>
 
 using namespace llvm;
@@ -126,7 +128,9 @@ struct Globals {
   DynamicLibrary::HandleSet OpenedHandles;
   DynamicLibrary::HandleSet OpenedTemporaryHandles;
   // Lock for ExplicitSymbols, OpenedHandles, and OpenedTemporaryHandles.
+#ifndef _REENTRANT
   llvm::sys::SmartMutex<true> SymbolsMutex;
+#endif
 };
 
 Globals &getGlobals() {
@@ -158,7 +162,9 @@ void *SearchForAddressOfSpecialSymbol(const char *SymbolName) {
 
 void DynamicLibrary::AddSymbol(StringRef SymbolName, void *SymbolValue) {
   auto &G = getGlobals();
+#ifndef _REENTRANT
   SmartScopedLock<true> Lock(G.SymbolsMutex);
+#endif
   G.ExplicitSymbols[SymbolName] = SymbolValue;
 }
 
@@ -167,7 +173,9 @@ DynamicLibrary DynamicLibrary::getPermanentLibrary(const char *FileName,
   auto &G = getGlobals();
   void *Handle = HandleSet::DLOpen(FileName, Err);
   if (Handle != &Invalid) {
+#ifndef _REENTRANT
     SmartScopedLock<true> Lock(G.SymbolsMutex);
+#endif
     G.OpenedHandles.AddLibrary(Handle, /*IsProcess*/ FileName == nullptr);
   }
 
@@ -177,7 +185,9 @@ DynamicLibrary DynamicLibrary::getPermanentLibrary(const char *FileName,
 DynamicLibrary DynamicLibrary::addPermanentLibrary(void *Handle,
                                                    std::string *Err) {
   auto &G = getGlobals();
+#ifndef _REENTRANT
   SmartScopedLock<true> Lock(G.SymbolsMutex);
+#endif
   // If we've already loaded this library, tell the caller.
   if (!G.OpenedHandles.AddLibrary(Handle, /*IsProcess*/ false,
                                   /*CanClose*/ false))

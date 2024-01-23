@@ -97,7 +97,7 @@
 #include <optional>
 #include <set>
 #include <utility>
-#if LLVM_ON_UNIX
+#if LLVM_ON_UNIX && !defined(__wasi__)
 #include <unistd.h> // getpid
 #endif
 

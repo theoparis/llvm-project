@@ -36,6 +36,7 @@ extern "C" void sys_icache_invalidate(const void *Addr, size_t len);
 extern "C" void __clear_cache(void *, void *);
 #endif
 
+#ifndef __wasi__
 static int getPosixProtectionFlags(unsigned Flags) {
   switch (Flags & llvm::sys::Memory::MF_RWE_MASK) {
   case llvm::sys::Memory::MF_READ:
@@ -66,6 +67,7 @@ static int getPosixProtectionFlags(unsigned Flags) {
   // Provide a default return value as required by some compilers.
   return PROT_NONE;
 }
+#endif
 
 namespace llvm {
 namespace sys {
@@ -77,6 +79,7 @@ MemoryBlock Memory::allocateMappedMemory(size_t NumBytes,
   if (NumBytes == 0)
     return MemoryBlock();
 
+#ifndef __wasi__
   // On platforms that have it, we can use MAP_ANON to get a memory-mapped
   // page without file backing, but we need a fallback of opening /dev/zero
   // for strictly POSIX platforms instead.
@@ -89,6 +92,12 @@ MemoryBlock Memory::allocateMappedMemory(size_t NumBytes,
     EC = std::error_code(errno, std::generic_category());
     return MemoryBlock();
   }
+#else
+	MemoryBlock Result;
+	Result.Address = ::malloc(NumBytes);
+	Result.AllocatedSize = NumBytes;
+	return Result;
+#endif
 #endif
 
   int MMFlags = MAP_PRIVATE;
@@ -152,8 +161,12 @@ std::error_code Memory::releaseMappedMemory(MemoryBlock &M) {
   if (M.Address == nullptr || M.AllocatedSize == 0)
     return std::error_code();
 
+#ifndef __wasi__
   if (0 != ::munmap(M.Address, M.AllocatedSize))
     return std::error_code(errno, std::generic_category());
+#else
+	:free(M.Address);
+#endif
 
   M.Address = nullptr;
   M.AllocatedSize = 0;
@@ -163,18 +176,22 @@ std::error_code Memory::releaseMappedMemory(MemoryBlock &M) {
 
 std::error_code Memory::protectMappedMemory(const MemoryBlock &M,
                                             unsigned Flags) {
+#ifndef __wasi__
   static const Align PageSize = Align(Process::getPageSizeEstimate());
+#endif
   if (M.Address == nullptr || M.AllocatedSize == 0)
     return std::error_code();
 
   if (!Flags)
     return std::error_code(EINVAL, std::generic_category());
 
+#ifndef __wasi__
   int Protect = getPosixProtectionFlags(Flags);
   uintptr_t Start =
       alignAddr((const uint8_t *)M.Address - PageSize.value() + 1, PageSize);
   uintptr_t End =
       alignAddr((const uint8_t *)M.Address + M.AllocatedSize, PageSize);
+#endif
 
   bool InvalidateCache = (Flags & MF_EXEC);
 
@@ -193,7 +210,11 @@ std::error_code Memory::protectMappedMemory(const MemoryBlock &M,
   }
 #endif
 
+#ifndef __wasi__
   int Result = ::mprotect((void *)Start, End - Start, Protect);
+#else
+	int Result = -1;
+#endif
 
   if (Result != 0)
     return std::error_code(errno, std::generic_category());

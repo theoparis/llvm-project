@@ -72,7 +72,11 @@ getRUsageTimes() {
 Process::Pid Process::getProcessId() {
   static_assert(sizeof(Pid) >= sizeof(pid_t),
                 "Process::Pid should be big enough to store pid_t");
+#ifndef __wasi__
   return Pid(::getpid());
+#else
+	return Pid(31415); // Pi
+#endif
 }
 
 // On Cygwin, getpagesize() returns 64k(AllocationGranularity) and
@@ -206,6 +210,7 @@ private:
 } // namespace
 
 std::error_code Process::FixupStandardFileDescriptors() {
+#ifndef __wasi__
   int NullFD = -1;
   FDCloser FDC(NullFD);
   const int StandardFDs[] = {STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO};
@@ -236,10 +241,12 @@ std::error_code Process::FixupStandardFileDescriptors() {
     else if (dup2(NullFD, StandardFD) < 0)
       return std::error_code(errno, std::generic_category());
   }
+#endif
   return std::error_code();
 }
 
 std::error_code Process::SafelyCloseFileDescriptor(int FD) {
+#ifndef __wasi__
   // Create a signal set filled with *all* signals.
   sigset_t FullSet, SavedSet;
   if (sigfillset(&FullSet) < 0 || sigfillset(&SavedSet) < 0)
@@ -252,6 +259,7 @@ std::error_code Process::SafelyCloseFileDescriptor(int FD) {
 #else
   if (sigprocmask(SIG_SETMASK, &FullSet, &SavedSet) < 0)
     return std::error_code(errno, std::generic_category());
+#endif
 #endif
   // Attempt to close the file descriptor.
   // We need to save the error, if one occurs, because our subsequent call to

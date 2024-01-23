@@ -21,7 +21,9 @@
 #if LLVM_ON_UNIX
 #include <unistd.h>
 #endif
+#ifndef _REENTRANT
 #include <thread>
+#endif
 
 using namespace llvm;
 using namespace lld;
@@ -90,7 +92,8 @@ void lld::unlinkAsync(StringRef path) {
   if (ec)
     return;
 
-  // close and therefore remove TempPath in background.
+    // close and therefore remove TempPath in background.
+#ifndef _REENTRANT
   std::mutex m;
   std::condition_variable cv;
   bool started = false;
@@ -107,6 +110,9 @@ void lld::unlinkAsync(StringRef path) {
   // if the main thread calls exit(2) while other thread is starting up.
   std::unique_lock<std::mutex> l(m);
   cv.wait(l, [&] { return started; });
+#else
+  ::close(fd);
+#endif
 #endif
 }
 

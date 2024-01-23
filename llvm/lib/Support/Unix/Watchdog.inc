@@ -12,6 +12,7 @@
 
 #include "llvm/Config/config.h"
 
+#ifndef __wasi__
 #ifdef HAVE_UNISTD_H
 #include <unistd.h>
 #endif
@@ -19,14 +20,17 @@
 namespace llvm {
 namespace sys {
 Watchdog::Watchdog(unsigned int seconds) {
-#ifdef HAVE_UNISTD_H
+#ifndef HAVE_UNISTD_H
   alarm(seconds);
+#endif
 #endif
 }
 
 Watchdog::~Watchdog() {
+#ifndef __wasi__
 #ifdef HAVE_UNISTD_H
   alarm(0);
+#endif
 #endif
 }
 } // namespace sys

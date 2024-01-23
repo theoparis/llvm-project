@@ -232,7 +232,8 @@ void llvm::computeLTOCacheKey(
   };
 
   auto AddUsedThings = [&](GlobalValueSummary *GS) {
-    if (!GS) return;
+    if (!GS)
+      return;
     AddUnsigned(GS->getVisibility());
     AddUnsigned(GS->isLive());
     AddUnsigned(GS->canAutoHide());
@@ -566,9 +567,7 @@ Expected<std::unique_ptr<InputFile>> InputFile::create(MemoryBufferRef Object) {
   return std::move(File);
 }
 
-StringRef InputFile::getName() const {
-  return Mods[0].getModuleIdentifier();
-}
+StringRef InputFile::getName() const { return Mods[0].getModuleIdentifier(); }
 
 BitcodeModule &InputFile::getSingleBitcodeModule() {
   assert(Mods.size() == 1 && "Expect only one bitcode module");
@@ -902,8 +901,8 @@ LTO::addRegularLTO(BitcodeModule BM, ArrayRef<InputFile::Symbol> Syms,
       if (Res.FinalDefinitionInLinkageUnit) {
         GV->setDSOLocal(true);
         if (GV->hasDLLImportStorageClass())
-          GV->setDLLStorageClass(GlobalValue::DLLStorageClassTypes::
-                                 DefaultStorageClass);
+          GV->setDLLStorageClass(
+              GlobalValue::DLLStorageClassTypes::DefaultStorageClass);
       }
     } else if (auto *AS =
                    dyn_cast_if_present<ModuleSymbolTable::AsmSymbol *>(Msym)) {
@@ -1350,7 +1349,7 @@ static const char *libcallRoutineNames[] = {
 #undef HANDLE_LIBCALL
 };
 
-ArrayRef<const char*> LTO::getRuntimeLibcallSymbols() {
+ArrayRef<const char *> LTO::getRuntimeLibcallSymbols() {
   return ArrayRef(libcallRoutineNames);
 }
 
@@ -1409,14 +1408,18 @@ public:
 
 namespace {
 class InProcessThinBackend : public ThinBackendProc {
+#ifndef _REENTRANT
   ThreadPool BackendThreadPool;
+#endif
   AddStreamFn AddStream;
   FileCache Cache;
   std::set<GlobalValue::GUID> CfiFunctionDefs;
   std::set<GlobalValue::GUID> CfiFunctionDecls;
 
   std::optional<Error> Err;
+#ifndef _REENTRANT
   std::mutex ErrMu;
+#endif
 
   bool ShouldEmitIndexFiles;
 
@@ -1429,8 +1432,11 @@ public:
       bool ShouldEmitIndexFiles, bool ShouldEmitImportsFiles)
       : ThinBackendProc(Conf, CombinedIndex, ModuleToDefinedGVSummaries,
                         OnWrite, ShouldEmitImportsFiles),
-        BackendThreadPool(ThinLTOParallelism), AddStream(std::move(AddStream)),
-        Cache(std::move(Cache)), ShouldEmitIndexFiles(ShouldEmitIndexFiles) {
+#ifndef _REENTRANT
+        BackendThreadPool(ThinLTOParallelism),
+#endif
+        AddStream(std::move(AddStream)), Cache(std::move(Cache)),
+        ShouldEmitIndexFiles(ShouldEmitIndexFiles) {
     for (auto &Name : CombinedIndex.cfiFunctionDefs())
       CfiFunctionDefs.insert(
           GlobalValue::getGUID(GlobalValue::dropLLVMManglingEscape(Name)));
@@ -1496,6 +1502,7 @@ public:
     assert(ModuleToDefinedGVSummaries.count(ModulePath));
     const GVSummaryMapTy &DefinedGlobals =
         ModuleToDefinedGVSummaries.find(ModulePath)->second;
+#ifndef _REENTRANT
     BackendThreadPool.async(
         [=](BitcodeModule BM, ModuleSummaryIndex &CombinedIndex,
             const FunctionImporter::ImportMapTy &ImportList,
@@ -1504,6 +1511,7 @@ public:
                 &ResolvedODR,
             const GVSummaryMapTy &DefinedGlobals,
             MapVector<StringRef, BitcodeModule> &ModuleMap) {
+#endif
           if (LLVM_ENABLE_THREADS && Conf.TimeTraceEnabled)
             timeTraceProfilerInitialize(Conf.TimeTraceGranularity,
                                         "thin backend");
@@ -1511,7 +1519,9 @@ public:
               AddStream, Cache, Task, BM, CombinedIndex, ImportList, ExportList,
               ResolvedODR, DefinedGlobals, ModuleMap);
           if (E) {
+#ifndef _REENTRANT
             std::unique_lock<std::mutex> L(ErrMu);
+#endif
             if (Err)
               Err = joinErrors(std::move(*Err), std::move(E));
             else
@@ -1520,16 +1530,20 @@ public:
           if (LLVM_ENABLE_THREADS && Conf.TimeTraceEnabled)
             timeTraceProfilerFinishThread();
         },
+#ifndef _REENTRANT
         BM, std::ref(CombinedIndex), std::ref(ImportList), std::ref(ExportList),
         std::ref(ResolvedODR), std::ref(DefinedGlobals), std::ref(ModuleMap));
 
+#endif
     if (OnWrite)
       OnWrite(std::string(ModulePath));
     return Error::success();
   }
 
   Error wait() override {
+#ifndef _REENTRANT
     BackendThreadPool.wait();
+#endif
     if (Err)
       return std::move(*Err);
     else
@@ -1537,7 +1551,11 @@ public:
   }
 
   unsigned getThreadCount() override {
+#ifndef _REENTRANT
     return BackendThreadPool.getThreadCount();
+#else
+  return 1;
+#endif
   }
 };
 } // end anonymous namespace

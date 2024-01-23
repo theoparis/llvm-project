@@ -326,19 +326,25 @@ void DebuginfodLog::push(const Twine &Message) {
 
 void DebuginfodLog::push(DebuginfodLogEntry Entry) {
   {
+#ifndef _REENTRANT
     std::lock_guard<std::mutex> Guard(QueueMutex);
+#endif
     LogEntryQueue.push(Entry);
   }
+#ifndef _REENTRANT
   QueueCondition.notify_one();
+#endif
 }
 
 DebuginfodLogEntry DebuginfodLog::pop() {
+#ifndef _REENTRANT
   {
     std::unique_lock<std::mutex> Guard(QueueMutex);
     // Wait for messages to be pushed into the queue.
     QueueCondition.wait(Guard, [&] { return !LogEntryQueue.empty(); });
   }
   std::lock_guard<std::mutex> Guard(QueueMutex);
+#endif
   if (!LogEntryQueue.size())
     llvm_unreachable("Expected message in the queue.");
 
@@ -412,16 +418,22 @@ static bool hasELFMagic(StringRef FilePath) {
 Error DebuginfodCollection::findBinaries(StringRef Path) {
   std::error_code EC;
   sys::fs::recursive_directory_iterator I(Twine(Path), EC), E;
+#ifndef _REENTRANT
   std::mutex IteratorMutex;
   ThreadPoolTaskGroup IteratorGroup(Pool);
+#endif
   for (unsigned WorkerIndex = 0; WorkerIndex < Pool.getThreadCount();
        WorkerIndex++) {
+#ifndef _REENTRANT
     IteratorGroup.async([&, this]() -> void {
+#endif
       std::string FilePath;
       while (true) {
         {
           // Check if iteration is over or there is an error during iteration
+#ifndef _REENTRANT
           std::lock_guard<std::mutex> Guard(IteratorMutex);
+#endif
           if (I == E || EC)
             return;
           // Grab a file path from the directory iterator and advance the
@@ -457,17 +469,25 @@ Error DebuginfodCollection::findBinaries(StringRef Path) {
 
         std::string IDString = buildIDToString(ID);
         if (Object->hasDebugInfo()) {
+#ifndef _REENTRANT
           std::lock_guard<sys::RWMutex> DebugBinariesGuard(DebugBinariesMutex);
+#endif
           (void)DebugBinaries.try_emplace(IDString, std::move(FilePath));
         } else {
+#ifndef _REENTRANT
           std::lock_guard<sys::RWMutex> BinariesGuard(BinariesMutex);
+#endif
           (void)Binaries.try_emplace(IDString, std::move(FilePath));
         }
       }
+#ifndef _REENTRANT
     });
+#endif
   }
+#ifndef _REENTRANT
   IteratorGroup.wait();
   std::unique_lock<std::mutex> Guard(IteratorMutex);
+#endif
   if (EC)
     return errorCodeToError(EC);
   return Error::success();

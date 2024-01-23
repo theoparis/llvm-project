@@ -50,7 +50,9 @@
 #include "llvm/TargetParser/Triple.h"
 #include "llvm/ToolDrivers/llvm-lib/LibDriver.h"
 #include <algorithm>
+#ifndef _REENTRANT
 #include <future>
+#endif
 #include <memory>
 #include <optional>
 #include <tuple>
@@ -130,6 +132,7 @@ using MBErrPair = std::pair<std::unique_ptr<MemoryBuffer>, std::error_code>;
 
 // Create a std::future that opens and maps a file using the best strategy for
 // the host platform.
+#ifndef _REENTRANT
 static std::future<MBErrPair> createFutureForFile(std::string path) {
 #if _WIN64
   // On Windows, file I/O is relatively slow so it is best to do this
@@ -140,12 +143,17 @@ static std::future<MBErrPair> createFutureForFile(std::string path) {
   auto strategy = std::launch::deferred;
 #endif
   return std::async(strategy, [=]() {
+#else
+static MBErrPair createFutureForFile(std::string path) {
+#endif
     auto mbOrErr = MemoryBuffer::getFile(path, /*IsText=*/false,
                                          /*RequiresNullTerminator=*/false);
     if (!mbOrErr)
       return MBErrPair{nullptr, mbOrErr.getError()};
     return MBErrPair{std::move(*mbOrErr), std::error_code()};
+#ifndef _REENTRANT
   });
+#endif
 }
 
 // Symbol names are mangled by prepending "_" on x86.
@@ -243,11 +251,14 @@ void LinkerDriver::addBuffer(std::unique_ptr<MemoryBuffer> mb,
 }
 
 void LinkerDriver::enqueuePath(StringRef path, bool wholeArchive, bool lazy) {
+#ifndef _REENTRANT
   auto future = std::make_shared<std::future<MBErrPair>>(
       createFutureForFile(std::string(path)));
+#endif
   std::string pathStr = std::string(path);
   enqueueTask([=]() {
     llvm::TimeTraceScope timeScope("File: ", path);
+#ifndef _REENTRANT
     auto [mb, ec] = future->get();
     if (ec) {
       // Retry reading the file (synchronously) now that we may have added
@@ -282,6 +293,25 @@ void LinkerDriver::enqueuePath(StringRef path, bool wholeArchive, bool lazy) {
         error(msg + "; did you mean '" + nearest + "'");
     } else
       ctx.driver.addBuffer(std::move(mb), wholeArchive, lazy);
+#else
+    auto ec = openFile(std::string(path));
+
+    if (ec) {
+      std::string msg = "could not open '" + pathStr + "': " + ec.message();
+      // Check if the filename is a typo for an option flag. OptTable thinks
+      // that all args that are not known options and that start with / are
+      // filenames, but e.g. `/nodefaultlibs` is more likely a typo for
+      // the option `/nodefaultlib` than a reference to a file in the root
+      // directory.
+      std::string nearest;
+      if (ctx.optTable.findNearest(pathStr, nearest) > 1)
+        error(msg);
+      else
+        error(msg + "; did you mean '" + nearest + "'");
+    } else
+      ctx.driver.addBuffer(std::move(mb), wholeArchive, lazy);
+		}
+#endif
   });
 }
 
@@ -347,7 +377,11 @@ void LinkerDriver::enqueueArchiveMember(const Archive::Child &c,
   auto future =
       std::make_shared<std::future<MBErrPair>>(createFutureForFile(childName));
   enqueueTask([=]() {
+#ifndef _REENTRANT
     auto mbOrErr = future->get();
+#else
+    auto mbOrErr = openFile(childName);
+#endif
     if (mbOrErr.second)
       reportBufferError(errorCodeToError(mbOrErr.second), childName);
     llvm::TimeTraceScope timeScope("Archive: ",
