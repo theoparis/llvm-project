@@ -15,6 +15,8 @@
 #include "gpu/app.h"
 #elif defined(__linux__)
 #include "linux/app.h"
+#elif defined(__APPLE__)
+#include "darwin/app.h"
 #elif defined(__UEFI__)
 #include "uefi/app.h"
 #endif
