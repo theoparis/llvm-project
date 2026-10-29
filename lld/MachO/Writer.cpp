@@ -46,7 +46,7 @@ class LCUuid;
 
 class Writer {
 public:
-  Writer() : buffer(errorHandler().outputBuffer) {}
+  Writer() : buffer(errorHandler().outputBuffer), addr(config->imageBase) {}
 
   void treatSpecialUndefineds();
   void scanRelocations();
@@ -1210,9 +1210,23 @@ void Writer::finalizeAddresses() {
   // Note that at this point, __LINKEDIT sections are empty, but we need to
   // determine addresses of other segments/sections before generating its
   // contents.
+  uint64_t floatingAddr = addr;
   for (OutputSegment *seg : outputSegments) {
     if (seg == linkEditSegment)
       continue;
+    auto fixedAddr = config->segmentAddresses.find(seg->name);
+    bool isPageZero = seg->name == segment_names::pageZero;
+    bool hasFixedAddr = fixedAddr != config->segmentAddresses.end();
+    if (hasFixedAddr)
+      addr = fixedAddr->second;
+    else if (isPageZero && config->imageBase != 0)
+      addr = 0;
+    else
+      addr = floatingAddr;
+    if (isPageZero && addr != 0)
+      fatal("__PAGEZERO must start at address zero");
+    if (!isPageZero && addr < floatingAddr)
+      fatal("segment " + seg->name + " overlaps or precedes an earlier segment");
     seg->addr = addr;
     assignAddresses(seg);
     // codesign / libstuff checks for segment ordering by verifying that
@@ -1221,11 +1235,21 @@ void Writer::finalizeAddresses() {
     // that the segments are contiguous. We handle addr / vmSize similarly for
     // the same reason.
     fileOff = alignToPowerOf2(fileOff, pageSize);
+    if (addr > UINT64_MAX - (pageSize - 1))
+      fatal("address overflow in segment " + seg->name);
     addr = alignToPowerOf2(addr, pageSize);
     seg->vmSize = addr - seg->addr;
     seg->fileSize = fileOff - seg->fileOff;
     seg->assignAddressesToStartEndSymbols();
+
+    // A fixed address below the normal layout does not move later segments
+    // backwards. A fixed address above it advances the layout to avoid
+    // overlapping a subsequent segment.
+    if (isPageZero && config->imageBase != 0 && addr > floatingAddr)
+      fatal("-image_base overlaps __PAGEZERO");
+    floatingAddr = std::max(floatingAddr, addr);
   }
+  addr = floatingAddr;
 }
 
 void Writer::finalizeLinkEditSegment() {
@@ -1247,6 +1271,12 @@ void Writer::finalizeLinkEditSegment() {
 
   // Now that __LINKEDIT is filled out, do a proper calculation of its
   // addresses and offsets.
+  auto fixedAddr = config->segmentAddresses.find(linkEditSegment->name);
+  if (fixedAddr != config->segmentAddresses.end()) {
+    if (fixedAddr->second < addr)
+      fatal("segment __LINKEDIT overlaps or precedes an earlier segment");
+    addr = fixedAddr->second;
+  }
   linkEditSegment->addr = addr;
   assignAddresses(linkEditSegment);
   // No need to page-align fileOff / addr here since this is the last segment.
@@ -1260,6 +1290,8 @@ void Writer::assignAddresses(OutputSegment *seg) {
   for (OutputSection *osec : seg->getSections()) {
     if (!osec->isNeeded())
       continue;
+    if (addr > UINT64_MAX - (osec->align - 1))
+      fatal("address overflow in segment " + seg->name);
     addr = alignToPowerOf2(addr, osec->align);
     fileOff = alignToPowerOf2(fileOff, osec->align);
     osec->addr = addr;
@@ -1267,6 +1299,8 @@ void Writer::assignAddresses(OutputSegment *seg) {
     osec->finalize();
     osec->assignAddressesToStartEndSymbols();
 
+    if (osec->getSize() > UINT64_MAX - addr)
+      fatal("address overflow in segment " + seg->name);
     addr += osec->getSize();
     fileOff += osec->getFileSize();
   }
