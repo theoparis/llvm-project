@@ -834,8 +834,7 @@ def section_order : MultiArg<["-"], "section_order", 2>,
     Group<grp_rare>;
 def segment_order : Separate<["-"], "segment_order">,
     MetaVarName<"<colon_separated_segment_list>">,
-    HelpText<"With -preload, specify layout sequence of colon-separated <segments>">,
-    Flags<[HelpHidden]>,
+    HelpText<"Specify layout sequence of colon-separated <segments> (except __TEXT and __LINKEDIT)">,
     Group<grp_rare>;
 def allow_heap_execute : Flag<["-"], "allow_heap_execute">,
     HelpText<"On i386, allow any page to execute code">,

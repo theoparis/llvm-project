@@ -79,6 +79,22 @@ template <typename T, typename F> static auto compareByOrder(F ord) {
 }
 
 static int segmentOrder(OutputSegment *seg) {
+  // The header must be at file offset zero, and __LINKEDIT is finalized last.
+  // Keep __TEXT first and __LINKEDIT last; preserve input order for omitted
+  // segments.
+  if (!config->segmentOrder.empty()) {
+    if (seg->name == segment_names::pageZero)
+      return -2;
+    if (seg->name == segment_names::text)
+      return -1;
+    if (seg->name == segment_names::linkEdit)
+      return std::numeric_limits<int>::max();
+    auto it = llvm::find(config->segmentOrder, seg->name);
+    if (it != config->segmentOrder.end())
+      return std::distance(config->segmentOrder.begin(), it);
+    return config->segmentOrder.size();
+  }
+
   return StringSwitch<int>(seg->name)
       .Case(segment_names::pageZero, -4)
       .Case(segment_names::text, -3)
