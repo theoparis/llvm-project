@@ -9,6 +9,10 @@
 # RUN: %lld -o %t/test -L%t -lgoodbye %t/test.o
 #
 # RUN: llvm-objdump --syms -d -r %t/test | FileCheck %s
+# RUN: %no-arg-lld -arch x86_64 -platform_version macos 11.0 11.0 \
+# RUN:   -static -no_pie -o %t/static -L%t -lgoodbye %t/test.o
+# RUN: llvm-objdump --macho --private-header %t/static | FileCheck %s --check-prefix=STATIC-HEADER
+# RUN: llvm-objdump --macho --all-headers %t/static | FileCheck %s --check-prefix=STATIC-LOADS
 
 # CHECK: SYMBOL TABLE:
 # CHECK: {{0+}}[[ADDR:[0-9a-f]+]] g     O __TEXT,__cstring _goodbye_world
@@ -16,6 +20,24 @@
 # CHECK: Disassembly of section __TEXT,__text
 # CHECK-LABEL: <_main>:
 # CHECK: leaq {{.*}}(%rip), %rsi   ## 0x[[ADDR]] <_goodbye_world>
+
+# STATIC-HEADER:      magic        cputype cpusubtype  caps    filetype {{.*}} flags
+# STATIC-HEADER-NEXT: MH_MAGIC_64  X86_64         ALL  {{.*}}  EXECUTE  {{.*}} NOUNDEFS{{$}}
+
+# STATIC-LOADS:      cmd LC_SYMTAB
+# STATIC-LOADS-NOT:  cmd LC_DYLD_INFO_ONLY
+# STATIC-LOADS-NOT:  cmd LC_DYLD_CHAINED_FIXUPS
+# STATIC-LOADS-NOT:  cmd LC_DYLD_EXPORTS_TRIE
+# STATIC-LOADS-NOT:  cmd LC_LOAD_DYLINKER
+# STATIC-LOADS-NOT:  cmd LC_CODE_SIGNATURE
+# STATIC-LOADS-NOT:  cmd LC_MAIN
+# STATIC-LOADS:      cmd LC_UNIXTHREAD
+# STATIC-LOADS:      flavor x86_THREAD_STATE64
+# STATIC-LOADS:      rip 0x{{[0-9a-f]+}}
+
+# RUN: not %no-arg-lld -arch x86_64 -platform_version macos 11.0 11.0 \
+# RUN:   -dylib -static -o %t/bad %t/test.o 2>&1 | FileCheck %s --check-prefix=ERR
+# ERR: error: -static cannot be used with -dylib or -bundle
 
 .section __TEXT,__text
 .global _main

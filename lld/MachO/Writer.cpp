@@ -26,6 +26,7 @@
 #include "lld/Common/CommonLinkerContext.h"
 #include "llvm/BinaryFormat/MachO.h"
 #include "llvm/Config/llvm-config.h"
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/Parallel.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/TimeProfiler.h"
@@ -289,6 +290,35 @@ class LCMain final : public LoadCommand {
       c->entryoff = config->entry->getVA() - in.header->addr;
 
     c->stacksize = 0;
+  }
+};
+
+// Static executables have no dynamic linker, so the kernel must set up the
+// initial thread state itself (LC_UNIXTHREAD) rather than LC_MAIN, which
+// would make XNU require a dynamic linker.
+class LCUnixThread final : public LoadCommand {
+  // flavor, count, then the register state (as 32-bit words).
+  uint32_t getStateWords() const {
+    return target->cpuType == CPU_TYPE_X86_64 ? 42 : 68;
+  }
+  uint32_t getSize() const override {
+    return sizeof(thread_command) + 2 * sizeof(uint32_t) +
+           getStateWords() * sizeof(uint32_t);
+  }
+
+  void writeTo(uint8_t *buf) const override {
+    auto *c = reinterpret_cast<thread_command *>(buf);
+    c->cmd = LC_UNIXTHREAD;
+    c->cmdsize = getSize();
+    auto *w = reinterpret_cast<uint32_t *>(buf + sizeof(thread_command));
+    uint64_t pc = config->entry->getVA();
+    bool isX86 = target->cpuType == CPU_TYPE_X86_64;
+    w[0] = isX86 ? 4 /*x86_THREAD_STATE64*/ : 6 /*ARM_THREAD_STATE64*/;
+    w[1] = getStateWords();
+    // rip is the 17th and pc the 33rd 64-bit register.
+    uint8_t *state = reinterpret_cast<uint8_t *>(w + 2);
+    memset(state, 0, getStateWords() * sizeof(uint32_t));
+    support::endian::write64le(state + (isX86 ? 16 : 32) * 8, pc);
   }
 };
 
@@ -828,12 +858,14 @@ template <class LP> void Writer::createLoadCommands() {
     seg->index = segIndex++;
   }
 
-  if (config->emitChainedFixups) {
-    in.header->addLoadCommand(make<LCChainedFixups>(in.chainedFixups));
-    in.header->addLoadCommand(make<LCExportsTrie>(in.exports));
-  } else {
-    in.header->addLoadCommand(make<LCDyldInfo>(
-        in.rebase, in.binding, in.weakBinding, in.lazyBinding, in.exports));
+  if (!config->staticLink) {
+    if (config->emitChainedFixups) {
+      in.header->addLoadCommand(make<LCChainedFixups>(in.chainedFixups));
+      in.header->addLoadCommand(make<LCExportsTrie>(in.exports));
+    } else {
+      in.header->addLoadCommand(make<LCDyldInfo>(
+          in.rebase, in.binding, in.weakBinding, in.lazyBinding, in.exports));
+    }
   }
   in.header->addLoadCommand(make<LCSymtab>(symtabSection, stringTableSection));
   in.header->addLoadCommand(
@@ -847,7 +879,8 @@ template <class LP> void Writer::createLoadCommands() {
 
   switch (config->outputType) {
   case MH_EXECUTE:
-    in.header->addLoadCommand(make<LCLoadDylinker>());
+    if (!config->staticLink)
+      in.header->addLoadCommand(make<LCLoadDylinker>());
     break;
   case MH_DYLIB:
     in.header->addLoadCommand(make<LCDylib>(LC_ID_DYLIB, config->installName,
@@ -878,8 +911,12 @@ template <class LP> void Writer::createLoadCommands() {
   }
 
   // This is down here to match ld64's load command order.
-  if (config->outputType == MH_EXECUTE)
-    in.header->addLoadCommand(make<LCMain>());
+  if (config->outputType == MH_EXECUTE) {
+    if (config->staticLink)
+      in.header->addLoadCommand(make<LCUnixThread>());
+    else
+      in.header->addLoadCommand(make<LCMain>());
+  }
 
   // See ld64's OutputFile::buildDylibOrdinalMapping for the corresponding
   // library ordinal computation code in ld64.
